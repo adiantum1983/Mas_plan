@@ -6,7 +6,8 @@ import io
 st.set_page_config(page_title="継続MAS予算登録用アプリ", layout="wide")
 
 def load_granular_data(csv_file):
-    excel_file = "継続MAS参考エクセル　製造原価使う版.xlsx"
+    base_dir = os.path.dirname(__file__)
+    excel_file = os.path.join(base_dir, "mas_template.xlsx")
     
     df_excel = pd.read_excel(excel_file)
     df_excel['Cat'] = df_excel['利益管理表科目'].bfill()
