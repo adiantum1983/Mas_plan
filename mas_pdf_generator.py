@@ -37,10 +37,10 @@ def format_pct(val):
     except:
         return val_str
 
-def generate_pdf(full_5y_df, df_5y_summary, bs_df, cf_df):
+def generate_pdf(full_5y_df, df_5y_summary, cf_df, target_profit=None, action_plans=None):
     font_name = register_fonts()
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     
     elements = []
     styles = getSampleStyleSheet()
@@ -63,6 +63,17 @@ def generate_pdf(full_5y_df, df_5y_summary, bs_df, cf_df):
     
     elements.append(Paragraph("継続MAS 5カ年計画レポート", title_style))
     
+    if target_profit is not None:
+        target_style = ParagraphStyle(
+            name="TargetStyle",
+            parent=styles["Normal"],
+            fontName=font_name,
+            fontSize=12,
+            alignment=2 # Right aligned
+        )
+        elements.append(Paragraph(f"目的利益 (予算1): ¥{format_num(target_profit)}", target_style))
+        elements.append(Spacer(1, 10))
+    
     # 1. 5Y Summary
     elements.append(Paragraph("1. 5カ年計画 総合指標", h2_style))
     summary_data = [["指標"] + [f"第{i}期" for i in range(1, 6)]]
@@ -75,9 +86,10 @@ def generate_pdf(full_5y_df, df_5y_summary, bs_df, cf_df):
                 row_vals.append(format_num(val))
         summary_data.append(row_vals)
         
-    t_summary = Table(summary_data, colWidths=[120] + [100]*5)
+    t_summary = Table(summary_data, colWidths=[110] + [85]*5)
     t_summary.setStyle(TableStyle([
         ('FONTNAME', (0,0), (-1,-1), font_name),
+        ('FONTSIZE', (0,0), (-1,-1), 9),
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#34495e")),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
         ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
@@ -114,7 +126,7 @@ def generate_pdf(full_5y_df, df_5y_summary, bs_df, cf_df):
                 subtotal_vals.append(format_num(cat_df[f'第{i}期'].sum()))
             detail_data.append(subtotal_vals)
                 
-            t_detail = Table(detail_data, colWidths=[200] + [90]*5)
+            t_detail = Table(detail_data, colWidths=[160] + [75]*5)
             t_detail.setStyle(TableStyle([
                 ('FONTNAME', (0,0), (-1,-1), font_name),
                 ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#ecf0f1")),
@@ -122,33 +134,19 @@ def generate_pdf(full_5y_df, df_5y_summary, bs_df, cf_df):
                 ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
                 ('ALIGN', (0,0), (-1,0), 'CENTER'),
                 ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                ('FONTSIZE', (0,0), (-1,-1), 9),
+                ('FONTSIZE', (0,0), (-1,-1), 8),
             ]))
             elements.append(t_detail)
             
-    # 3. B/S and CF
+            if action_plans and cat in action_plans and action_plans[cat].strip():
+                elements.append(Spacer(1, 5))
+                ap_text = f"<b>【アクションプラン】</b><br/>" + action_plans[cat].replace('\n', '<br/>')
+                elements.append(Paragraph(ap_text, ParagraphStyle(name=f"AP_{cat}", fontName=font_name, fontSize=9, leading=12)))
+                elements.append(Spacer(1, 15))
+            
+    # 3. CF
     elements.append(PageBreak())
-    elements.append(Paragraph("3. 予測貸借対照表 (B/S) ピックアップ", h2_style))
-    
-    bs_data = [["項目"] + [f"第{i}期" for i in range(1, 6)]]
-    for row_name in bs_df.columns:
-        row_vals = [row_name]
-        for val in bs_df[row_name].values:
-            row_vals.append(format_num(val))
-        bs_data.append(row_vals)
-        
-    t_bs = Table(bs_data, colWidths=[120] + [100]*5)
-    t_bs.setStyle(TableStyle([
-        ('FONTNAME', (0,0), (-1,-1), font_name),
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#34495e")),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-    ]))
-    elements.append(t_bs)
-    
-    elements.append(Spacer(1, 20))
-    elements.append(Paragraph("4. キャッシュ・フロー予測", h2_style))
+    elements.append(Paragraph("3. キャッシュ・フロー予測", h2_style))
     
     cf_data = [["項目"] + [f"第{i}期" for i in range(1, 6)]]
     for row_name in cf_df.columns:
@@ -157,9 +155,10 @@ def generate_pdf(full_5y_df, df_5y_summary, bs_df, cf_df):
             row_vals.append(format_num(val))
         cf_data.append(row_vals)
         
-    t_cf = Table(cf_data, colWidths=[150] + [100]*5)
+    t_cf = Table(cf_data, colWidths=[160] + [75]*5)
     t_cf.setStyle(TableStyle([
         ('FONTNAME', (0,0), (-1,-1), font_name),
+        ('FONTSIZE', (0,0), (-1,-1), 9),
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#34495e")),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
         ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#fadbd8")), # FCF row

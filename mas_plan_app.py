@@ -50,16 +50,30 @@ def load_granular_data(csv_file):
     df_acc_filtered['勘定科目名'] = df_acc_filtered['Final Name']
     df_acc_filtered['Actual'] = df_acc_filtered['Actual'].fillna(0).astype(int)
     
+    # 除外対象の科目を削除
+    df_acc_filtered = df_acc_filtered[~df_acc_filtered['勘定科目名'].str.contains('法人税|当期純利益', na=False)]
+    
     return df_acc_filtered, df_acc['Cat'].unique()
 
 def calculate_budget1(df, target_profit=None):
     res = df.copy()
     
-    totals = res.groupby('Group')['Actual'].sum()
-    sales = totals.get('売上', 0)
-    vc = totals.get('売上原価・変動費', 0) + totals.get('製造原価', 0)
-    fc = totals.get('固定費', 0)
-    non_op = totals.get('営業外', 0)
+    sales = 0; vc = 0; fc = 0; non_op = 0
+    for idx, row in res.iterrows():
+        g = row['Group']
+        val = row['Actual']
+        name = str(row['勘定科目名'])
+        if g == '売上':
+            sales += val
+        elif g in ['売上原価・変動費', '製造原価']:
+            if g == '製造原価' and any(x in name for x in ['賃金', '賞与', '法定福利費', '厚生費']):
+                fc += val
+            else:
+                vc += val
+        elif g == '固定費':
+            fc += val
+        elif g == '営業外':
+            non_op += val
     
     actual_profit = sales - vc - fc + non_op
     vcr = vc / sales if sales != 0 else 0
@@ -81,8 +95,12 @@ def calculate_budget1(df, target_profit=None):
     for idx, row in res.iterrows():
         g = row['Group']
         val = row['Actual']
+        name = str(row['勘定科目名'])
         if g in ['売上', '売上原価・変動費', '製造原価']:
-            budget1_vals.append(int(round(val * multiplier)))
+            if g == '製造原価' and any(x in name for x in ['賃金', '賞与', '法定福利費', '厚生費']):
+                budget1_vals.append(int(val))
+            else:
+                budget1_vals.append(int(round(val * multiplier)))
         else:
             budget1_vals.append(int(val))
             
@@ -145,11 +163,18 @@ def render_5y_group_editor(yr1_df, cat_name, growth_rate):
     m[:, 0] = subset['予算２(手入力)'].values
     
     group_name = subset.iloc[0]['Group'] if not subset.empty else "その他"
-    is_growing_group = group_name in ['売上', '売上原価・変動費', '製造原価']
-    mult = (1 + growth_rate) if is_growing_group else 1.0
     
     for i in range(1, 5):
-        m[:, i] = np.round(m[:, i-1] * mult)
+        for row_idx, (_, row) in enumerate(subset.iterrows()):
+            name = str(row['勘定科目名'])
+            if group_name in ['売上', '売上原価・変動費', '製造原価']:
+                if group_name == '製造原価' and any(x in name for x in ['賃金', '賞与', '法定福利費', '厚生費']):
+                    mult = 1.0
+                else:
+                    mult = 1.0 + growth_rate
+            else:
+                mult = 1.0
+            m[row_idx, i] = np.round(m[row_idx, i-1] * mult)
         
     disp = pd.DataFrame(m, columns=['第1期', '第2期', '第3期', '第4期', '第5期'])
     disp.insert(0, '科目名', subset['勘定科目名'].values)
@@ -217,23 +242,30 @@ def main():
             b2_sum_sales = 0; b2_sum_vc = 0; b2_sum_fc = 0; b2_sum_nonop = 0
             
             recon_b1 = []
+            action_plans = {}
             
             for cat in cats_order:
                 ed_df, out_df = render_group_editor(b1_df, cat)
                 if not out_df.empty:
+                    action_plans[cat] = st.text_area(f"✏️ 【{cat}】のアクションプラン", key=f"ap_{cat}", height=80, placeholder="ここに具体的なアクションや留意事項を入力してください")
+                    st.write("") # スペーサー
                     recon_b1.append(out_df)
-                    g = out_df.iloc[0]['Group']
-                    v1 = out_df['予算１(自動)'].sum()
-                    v2 = out_df['予算２(手入力)'].sum()
-                    
-                    if g == '売上':
-                        b1_sum_sales += v1; b2_sum_sales += v2
-                    elif g in ['売上原価・変動費', '製造原価']:
-                        b1_sum_vc += v1; b2_sum_vc += v2
-                    elif g == '固定費':
-                        b1_sum_fc += v1; b2_sum_fc += v2
-                    elif g == '営業外':
-                        b1_sum_nonop += v1; b2_sum_nonop += v2
+                    for _, row in out_df.iterrows():
+                        g_row = row['Group']
+                        n_row = str(row['勘定科目名'])
+                        v1_r = row['予算１(自動)']
+                        v2_r = row['予算２(手入力)']
+                        if g_row == '売上':
+                            b1_sum_sales += v1_r; b2_sum_sales += v2_r
+                        elif g_row in ['売上原価・変動費', '製造原価']:
+                            if g_row == '製造原価' and any(x in n_row for x in ['賃金', '賞与', '法定福利費', '厚生費']):
+                                b1_sum_fc += v1_r; b2_sum_fc += v2_r
+                            else:
+                                b1_sum_vc += v1_r; b2_sum_vc += v2_r
+                        elif g_row == '固定費':
+                            b1_sum_fc += v1_r; b2_sum_fc += v2_r
+                        elif g_row == '営業外':
+                            b1_sum_nonop += v1_r; b2_sum_nonop += v2_r
                 
                 if cat == "他の変動費":
                     b2_vcr = b2_sum_vc / b2_sum_sales if b2_sum_sales else 0
@@ -283,8 +315,18 @@ def main():
                 col_name = f'第{i}期'
                 if not full_5y_df.empty:
                     sales = full_5y_df[full_5y_df['Group'] == '売上'][col_name].sum()
-                    vc = full_5y_df[full_5y_df['Group'].isin(['売上原価・変動費', '製造原価'])][col_name].sum()
-                    fc = full_5y_df[full_5y_df['Group'] == '固定費'][col_name].sum()
+                    vc = 0; fc = 0
+                    for _, r in full_5y_df.iterrows():
+                        g = r['Group']
+                        n = str(r['勘定科目名'])
+                        v = r[col_name]
+                        if g in ['売上原価・変動費', '製造原価']:
+                            if g == '製造原価' and any(x in n for x in ['賃金', '賞与', '法定福利費', '厚生費']):
+                                fc += v
+                            else:
+                                vc += v
+                        elif g == '固定費':
+                            fc += v
                     nonop = full_5y_df[full_5y_df['Group'] == '営業外'][col_name].sum()
                     
                     deprec_rows = full_5y_df[full_5y_df['勘定科目名'].str.contains('減価償却', na=False)]
@@ -305,31 +347,7 @@ def main():
         with tab4:
             st.header("3. 借入金返済 と キャッシュ・フロー予測")
             
-            colA, colB, colC = st.columns(3)
-            ar_days = colA.number_input("売上債権 回転日数 (日)", value=30.0)
-            inv_days = colB.number_input("棚卸資産 回転日数 (日)", value=15.0)
-            ap_days = colC.number_input("買入債務 回転日数 (日)", value=30.0)
-            
-            bs_list = []
-            for i, row in df_5y_summary.iterrows():
-                sales = row['売上高']
-                vc = row['変動費計']
-                
-                ar = int(round((sales * ar_days) / 365))
-                inv = int(round((vc * inv_days) / 365))
-                ap = int(round((vc * ap_days) / 365))
-                
-                bs_list.append({
-                    "売上債権残高": ar,
-                    "棚卸資産残高": inv,
-                    "買入債務残高": ap,
-                })
-                
-            bs_df = pd.DataFrame(bs_list, index=[f"第{i}期" for i in range(1, 6)])
-            st.write("▼ 予測貸借対照表 (B/S) ピックアップ")
-            st.dataframe(bs_df.T.style.format("{:,.0f}"), use_container_width=True)
-            
-            st.divider()
+
             
             loan_input = pd.DataFrame([
                 {"借入先": "銀行A", "現在残高": 10000000, "年間返済額": 2000000, "残り期間(年)": 5, "第1期・新規借入": 0},
@@ -392,7 +410,7 @@ def main():
         st.subheader("PDF ダウンロード")
         import mas_pdf_generator
         try:
-            pdf_bytes = mas_pdf_generator.generate_pdf(full_5y_df, df_5y_summary, bs_df, cf_df)
+            pdf_bytes = mas_pdf_generator.generate_pdf(full_5y_df, df_5y_summary, cf_df, curr_target, action_plans)
             st.download_button(label="📄 全明細・5カ年計画をPDFでダウンロード", data=pdf_bytes, file_name="MAS_5Year_Plan.pdf", mime="application/pdf")
         except Exception as e:
             st.error(f"PDF Output Error: {e}")
